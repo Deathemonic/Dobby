@@ -3,20 +3,21 @@
 #include <vector>
 
 #include <windows.h>
+#include <psapi.h>
 
 #define LINE_MAX 2048
 
 // ================================================================
 // GetProcessMemoryLayout
 
-static bool memory_region_comparator(MemRange a, MemRange b) {
-  return (a.address > b.address);
+static bool memory_region_comparator(MemRegion a, MemRegion b) {
+  return (a.start > b.start);
 }
 
 // https://gist.github.com/jedwardsol/9d4fe1fd806043a5767affbd200088ca
 
-std::vector<MemRange> ProcessMemoryLayout;
-std::vector<MemRange> ProcessRuntimeUtility::GetProcessMemoryLayout() {
+static std::vector<MemRegion> ProcessMemoryLayout;
+const std::vector<MemRegion> &ProcessRuntimeUtility::GetProcessMemoryLayout() {
   if (!ProcessMemoryLayout.empty()) {
     ProcessMemoryLayout.clear();
   }
@@ -35,6 +36,7 @@ std::vector<MemRange> ProcessRuntimeUtility::GetProcessMemoryLayout() {
     switch (region.Protect & ~mask) {
     case PAGE_NOACCESS:
     case PAGE_READONLY:
+      permission = MemoryPermission::kRead;
       break;
 
     case PAGE_EXECUTE:
@@ -53,7 +55,7 @@ std::vector<MemRange> ProcessRuntimeUtility::GetProcessMemoryLayout() {
       break;
     }
 
-    ProcessMemoryLayout.push_back(MemRange{(void *)region.BaseAddress, region.RegionSize, permission});
+    ProcessMemoryLayout.push_back(MemRegion{(addr_t)region.BaseAddress, region.RegionSize, permission});
   }
   return ProcessMemoryLayout;
 }
@@ -61,12 +63,26 @@ std::vector<MemRange> ProcessRuntimeUtility::GetProcessMemoryLayout() {
 // ================================================================
 // GetProcessModuleMap
 
-std::vector<RuntimeModule> ProcessModuleMap;
+static std::vector<RuntimeModule> ProcessModuleMap;
 
-std::vector<RuntimeModule> ProcessRuntimeUtility::GetProcessModuleMap() {
-  if (!ProcessMemoryLayout.empty()) {
-    ProcessMemoryLayout.clear();
+const std::vector<RuntimeModule> &ProcessRuntimeUtility::GetProcessModuleMap() {
+  if (!ProcessModuleMap.empty()) {
+    ProcessModuleMap.clear();
   }
+
+  HMODULE hMods[1024];
+  DWORD cbNeeded;
+  HANDLE hProcess = GetCurrentProcess();
+
+  if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded)) {
+    for (unsigned int i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
+      RuntimeModule module = {0};
+      GetModuleFileNameExA(hProcess, hMods[i], module.path, sizeof(module.path));
+      module.load_address = (void *)hMods[i];
+      ProcessModuleMap.push_back(module);
+    }
+  }
+
   return ProcessModuleMap;
 }
 
